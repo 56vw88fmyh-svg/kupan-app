@@ -344,6 +344,85 @@ begin
 end;
 $$;
 
+create or replace function public.admin_mark_reservation(
+  target_reservation_id uuid,
+  target_status text
+)
+returns public.reservations
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_reservation public.reservations;
+begin
+  if not public.is_admin() then
+    raise exception 'Solo admin puede marcar asistencia.';
+  end if;
+
+  if target_status not in ('attended', 'no_show') then
+    raise exception 'Estado de asistencia invalido.';
+  end if;
+
+  update public.reservations
+  set status = target_status
+  where id = target_reservation_id
+    and status in ('reserved', 'attended', 'no_show')
+  returning * into updated_reservation;
+
+  if updated_reservation.id is null then
+    raise exception 'Reserva no encontrada o ya cancelada.';
+  end if;
+
+  return updated_reservation;
+end;
+$$;
+
+create or replace function public.get_my_reservations()
+returns table (
+  id uuid,
+  profile_id uuid,
+  class_schedule_id uuid,
+  membership_id uuid,
+  reservation_date date,
+  status text,
+  token_charged boolean,
+  cancelled_at timestamptz,
+  created_at timestamptz,
+  schedule_day_of_week integer,
+  schedule_time text,
+  schedule_class_name text,
+  schedule_coach text,
+  schedule_max_spots integer
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    r.id,
+    r.profile_id,
+    r.class_schedule_id,
+    r.membership_id,
+    r.reservation_date,
+    r.status,
+    r.token_charged,
+    r.cancelled_at,
+    r.created_at,
+    cs.day_of_week as schedule_day_of_week,
+    cs.time::text as schedule_time,
+    cs.class_name as schedule_class_name,
+    cs.coach as schedule_coach,
+    cs.max_spots as schedule_max_spots
+  from public.reservations r
+  join public.class_schedule cs on cs.id = r.class_schedule_id
+  where r.profile_id = auth.uid()
+    and r.status in ('reserved', 'attended')
+    and r.reservation_date >= current_date
+  order by r.reservation_date, cs.time;
+$$;
+
 create or replace function public.expire_old_memberships()
 returns integer
 language plpgsql
@@ -394,6 +473,14 @@ begin
   return expired_count;
 end;
 $$;
+
+grant execute on function public.get_active_membership(uuid) to authenticated;
+grant execute on function public.membership_remaining_tokens(uuid) to authenticated;
+grant execute on function public.reserve_class(uuid, uuid, date) to authenticated;
+grant execute on function public.cancel_reservation(uuid) to authenticated;
+grant execute on function public.admin_mark_reservation(uuid, text) to authenticated;
+grant execute on function public.get_my_reservations() to authenticated;
+grant execute on function public.expire_old_memberships() to authenticated;
 
 alter table public.memberships enable row level security;
 alter table public.reservations enable row level security;

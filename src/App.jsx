@@ -88,13 +88,15 @@ export default function App() {
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return undefined
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session?.user) {
         setCurrentUser(null)
         return
       }
 
-      setCurrentUser(await getCurrentSupabaseUser())
+      window.setTimeout(() => {
+        getCurrentSupabaseUser().then((user) => setCurrentUser(user))
+      }, 0)
     })
 
     return () => {

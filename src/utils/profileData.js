@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase.js'
+import { mapReservationRow } from './supabaseReservations.js'
 
 export const profileEditableLevels = ['Iniciado', 'Rookie', 'Scaled', 'RX']
 
@@ -53,12 +54,7 @@ export async function loadSupabaseProfileData(profileId) {
       .maybeSingle(),
     supabase.rpc('get_active_membership', { target_profile_id: profileId }),
     supabase
-      .from('reservations')
-      .select('id, reservation_date, status, created_at, class_schedule:class_schedule(id, day_of_week, time, class_name, coach, max_spots)')
-      .eq('profile_id', profileId)
-      .eq('status', 'reserved')
-      .gte('reservation_date', new Date().toISOString().slice(0, 10))
-      .order('reservation_date', { ascending: true }),
+      .rpc('get_my_reservations'),
     supabase
       .from('personal_records')
       .select('id, movement, value, unit, record_date, notes')
@@ -69,7 +65,7 @@ export async function loadSupabaseProfileData(profileId) {
 
   if (profileResult.error) return getProfileError('No pudimos cargar tus datos personales desde Supabase.')
   if (membershipResult.error) return getProfileError('No pudimos cargar tu plan activo desde Supabase.')
-  if (reservationsResult.error) return getProfileError('No pudimos cargar tus reservas desde Supabase.')
+  if (reservationsResult.error) return getProfileError(`No pudimos cargar tus reservas desde Supabase: ${reservationsResult.error.message}`)
   if (recordsResult.error) return getProfileError('No pudimos cargar tus ultimos PR desde Supabase.')
 
   return {
@@ -77,7 +73,7 @@ export async function loadSupabaseProfileData(profileId) {
     data: {
       profile: profileResult.data,
       membership: Array.isArray(membershipResult.data) ? membershipResult.data[0] : membershipResult.data,
-      reservations: reservationsResult.data ?? [],
+      reservations: (reservationsResult.data ?? []).map(mapReservationRow),
       records: recordsResult.data ?? [],
     },
   }

@@ -46,6 +46,12 @@ export function getAuthErrorMessage(error) {
 export async function getProfileByUser(user) {
   if (!isSupabaseConfigured || !supabase || !user) return null
 
+  const { data: rpcProfile, error: rpcError } = await supabase
+    .rpc('get_my_profile')
+    .maybeSingle()
+
+  if (!rpcError && rpcProfile) return rpcProfile
+
   const { data, error } = await supabase
     .from('profiles')
     .select('id, full_name, email, phone, birth_date, level, role, status')
