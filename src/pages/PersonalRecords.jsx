@@ -458,7 +458,7 @@ export function PersonalRecords({ currentUser, setActivePage }) {
           <label className="block">
             <span className="text-xs font-black uppercase tracking-[0.16em] text-white/70">Notas</span>
             <textarea
-              className="mt-2 min-h-24 w-full resize-none rounded-xl border border-kupan-border bg-kupan-black/45 px-4 py-3 text-base font-bold leading-6 text-kupan-bone outline-none transition placeholder:text-white/35 focus:border-kupan-flame"
+              className="mt-2 min-h-24 w-full resize-none rounded-xl border border-kupan-border bg-kupan-black/45 px-4 py-3 text-base font-bold leading-6 text-kupan-bone outline-none transition placeholder:text-white/55 focus:border-kupan-flame"
               value={formData.notes}
               placeholder="Contexto, escala usada o cómo se sintió."
               onChange={(event) => updateForm({ notes: event.target.value })}

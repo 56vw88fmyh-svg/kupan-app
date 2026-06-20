@@ -67,75 +67,62 @@ create table if not exists public.personal_records (
 );
 
 -- If personal_records already existed with the previous app schema, add modern columns safely.
+-- Keep legacy app columns too: the current React app still reads/writes these
+-- while the modern schema uses user_id/exercise_name/achieved_at internally.
 alter table public.personal_records add column if not exists user_id uuid;
+alter table public.personal_records add column if not exists profile_id uuid;
 alter table public.personal_records add column if not exists exercise_id uuid;
 alter table public.personal_records add column if not exists exercise_name text;
+alter table public.personal_records add column if not exists movement text;
 alter table public.personal_records add column if not exists record_type text;
 alter table public.personal_records add column if not exists value_text text;
 alter table public.personal_records add column if not exists rounds integer;
 alter table public.personal_records add column if not exists reps integer;
 alter table public.personal_records add column if not exists time_seconds integer;
 alter table public.personal_records add column if not exists achieved_at date;
+alter table public.personal_records add column if not exists record_date date;
 alter table public.personal_records add column if not exists source text default 'app';
 alter table public.personal_records add column if not exists created_at timestamptz default now();
 alter table public.personal_records add column if not exists updated_at timestamptz default now();
 
 -- Backfill from the previous KUPAN PR schema if those columns exist.
-do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'personal_records' and column_name = 'profile_id'
-  ) then
-    update public.personal_records
-    set user_id = coalesce(user_id, profile_id)
-    where user_id is null;
-  end if;
+update public.personal_records
+set
+  user_id = coalesce(user_id, profile_id),
+  profile_id = coalesce(profile_id, user_id)
+where user_id is null or profile_id is null;
 
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'personal_records' and column_name = 'movement'
-  ) then
-    update public.personal_records
-    set exercise_name = coalesce(nullif(btrim(exercise_name), ''), movement)
-    where exercise_name is null or length(btrim(exercise_name)) = 0;
-  end if;
+update public.personal_records
+set
+  exercise_name = coalesce(nullif(btrim(exercise_name), ''), movement),
+  movement = coalesce(nullif(btrim(movement), ''), exercise_name)
+where exercise_name is null
+  or length(btrim(exercise_name)) = 0
+  or movement is null
+  or length(btrim(movement)) = 0;
 
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'personal_records' and column_name = 'record_date'
-  ) then
-    update public.personal_records
-    set achieved_at = coalesce(achieved_at, record_date)
-    where achieved_at is null;
-  end if;
+update public.personal_records
+set
+  achieved_at = coalesce(achieved_at, record_date),
+  record_date = coalesce(record_date, achieved_at)
+where achieved_at is null or record_date is null;
 
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'personal_records' and column_name = 'unit'
-  ) then
-    update public.personal_records
-    set record_type = coalesce(
-      nullif(btrim(record_type), ''),
-      case
-        when unit = 'tiempo' then 'time'
-        when unit = 'reps' then 'reps'
-        when unit = 'metros' then 'distance'
-        when unit = 'calorias' then 'calories'
-        else 'weight'
-      end
-    )
-    where record_type is null or length(btrim(record_type)) = 0;
-  else
-    update public.personal_records
-    set record_type = coalesce(nullif(btrim(record_type), ''), 'custom')
-    where record_type is null or length(btrim(record_type)) = 0;
-  end if;
+update public.personal_records
+set record_type = coalesce(
+  nullif(btrim(record_type), ''),
+  case
+    when unit = 'tiempo' then 'time'
+    when unit = 'reps' then 'reps'
+    when unit = 'metros' then 'distance'
+    when unit = 'calorias' then 'calories'
+    else 'weight'
+  end
+)
+where record_type is null or length(btrim(record_type)) = 0;
 
-  update public.personal_records
-  set source = coalesce(nullif(btrim(source), ''), 'legacy_app')
-  where source is null or length(btrim(source)) = 0;
-end $$;
+update public.personal_records
+set source = coalesce(nullif(btrim(source), ''), 'legacy_app')
+where source is null or length(btrim(source)) = 0;
 
 -- Add foreign keys only when they do not exist. Existing legacy rows are preserved.
 do $$
@@ -288,6 +275,9 @@ on public.exercises (is_active, normalized_name);
 create index if not exists personal_records_user_id_idx
 on public.personal_records (user_id);
 
+create index if not exists personal_records_profile_id_idx
+on public.personal_records (profile_id);
+
 create index if not exists personal_records_exercise_id_idx
 on public.personal_records (exercise_id);
 
@@ -310,10 +300,51 @@ begin
 end;
 $$;
 
+create or replace function public.sync_personal_record_compatibility()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.user_id is not null and new.profile_id is not null and new.user_id <> new.profile_id then
+    raise exception 'El dueño del PR no coincide.';
+  end if;
+
+  new.user_id = coalesce(new.user_id, new.profile_id);
+  new.profile_id = coalesce(new.profile_id, new.user_id);
+
+  new.exercise_name = coalesce(nullif(btrim(new.exercise_name), ''), nullif(btrim(new.movement), ''));
+  new.movement = coalesce(nullif(btrim(new.movement), ''), new.exercise_name);
+
+  new.achieved_at = coalesce(new.achieved_at, new.record_date);
+  new.record_date = coalesce(new.record_date, new.achieved_at);
+
+  new.record_type = coalesce(
+    nullif(btrim(new.record_type), ''),
+    case
+      when new.unit = 'tiempo' then 'time'
+      when new.unit = 'reps' then 'reps'
+      when new.unit = 'metros' then 'distance'
+      when new.unit = 'calorias' then 'calories'
+      else 'weight'
+    end
+  );
+
+  new.source = coalesce(nullif(btrim(new.source), ''), 'app');
+  return new;
+end;
+$$;
+
 drop trigger if exists set_exercises_updated_at on public.exercises;
 create trigger set_exercises_updated_at
 before update on public.exercises
 for each row execute function public.set_updated_at();
+
+drop trigger if exists sync_personal_record_compatibility_before_write on public.personal_records;
+create trigger sync_personal_record_compatibility_before_write
+before insert or update on public.personal_records
+for each row execute function public.sync_personal_record_compatibility();
 
 drop trigger if exists set_personal_records_updated_at on public.personal_records;
 create trigger set_personal_records_updated_at
@@ -329,29 +360,29 @@ create policy "Students read own PR"
 on public.personal_records
 for select
 to authenticated
-using (user_id = auth.uid());
+using (coalesce(user_id, profile_id) = auth.uid());
 
 drop policy if exists "Students insert own PR" on public.personal_records;
 create policy "Students insert own PR"
 on public.personal_records
 for insert
 to authenticated
-with check (user_id = auth.uid());
+with check (coalesce(user_id, profile_id) = auth.uid());
 
 drop policy if exists "Students update own PR" on public.personal_records;
 create policy "Students update own PR"
 on public.personal_records
 for update
 to authenticated
-using (user_id = auth.uid())
-with check (user_id = auth.uid());
+using (coalesce(user_id, profile_id) = auth.uid())
+with check (coalesce(user_id, profile_id) = auth.uid());
 
 drop policy if exists "Students delete own PR" on public.personal_records;
 create policy "Students delete own PR"
 on public.personal_records
 for delete
 to authenticated
-using (user_id = auth.uid());
+using (coalesce(user_id, profile_id) = auth.uid());
 
 -- Exercise catalog read policy.
 drop policy if exists "Authenticated read active exercises" on public.exercises;

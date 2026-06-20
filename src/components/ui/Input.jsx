@@ -39,7 +39,7 @@ export function Input({
         <input
           id={inputId}
           className={cn(
-            'min-h-12 w-full rounded-xl border bg-kupan-black/45 px-4 py-3 text-base font-bold text-kupan-bone outline-none transition placeholder:text-white/35 disabled:cursor-not-allowed disabled:opacity-55',
+            'min-h-12 w-full rounded-xl border bg-kupan-black/45 px-4 py-3 text-base font-bold text-kupan-bone outline-none transition placeholder:text-white/55 disabled:cursor-not-allowed disabled:opacity-55',
             icon ? 'pl-10' : '',
             statusClasses[status],
             className,
